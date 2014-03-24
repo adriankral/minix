@@ -99,7 +99,7 @@ static void set_idle_name(char * name, int n)
 
 #define BuildNotifyMessage(m_ptr, src, dst_ptr) \
 	(m_ptr)->m_type = NOTIFY_MESSAGE;				\
-	(m_ptr)->NOTIFY_TIMESTAMP = get_monotonic();			\
+	(m_ptr)->NOTIFY_TIMESTAMP = get_uptime();			\
 	switch (src) {							\
 	case HARDWARE:							\
 		(m_ptr)->NOTIFY_ARG = priv(dst_ptr)->s_int_pending;	\
@@ -1223,9 +1223,6 @@ int try_deliver_senda(struct proc *caller_ptr,
 		dst_ptr->p_misc_flags |= MF_DELIVERMSG;
 		IPC_STATUS_ADD_CALL(dst_ptr, SENDA);
 		RTS_UNSET(dst_ptr, RTS_RECEIVING);
-#if DEBUG_IPC_HOOK
-		hook_ipc_msgrecv(&dst_ptr->p_delivermsg, caller_ptr, dst_ptr);
-#endif
 	} else if (r == OK) {
 		/* Inform receiver that something is pending */
 		set_sys_bit(priv(dst_ptr)->s_asyn_pending, 
@@ -1401,9 +1398,6 @@ static int try_one(struct proc *src_ptr, struct proc *dst_ptr)
 	dst_ptr->p_delivermsg = tabent.msg;
 	dst_ptr->p_delivermsg.m_source = src_ptr->p_endpoint;
 	dst_ptr->p_misc_flags |= MF_DELIVERMSG;
-#if DEBUG_IPC_HOOK
-	hook_ipc_msgrecv(&dst_ptr->p_delivermsg, src_ptr, dst_ptr);
-#endif
 
 store_result:
 	/* Store results for sender */
@@ -1805,7 +1799,7 @@ static void notify_scheduler(struct proc *p)
 	m_no_quantum.SCHEDULING_ACNT_DEQS      = p->p_accounting.dequeues;
 	m_no_quantum.SCHEDULING_ACNT_IPC_SYNC  = p->p_accounting.ipc_sync;
 	m_no_quantum.SCHEDULING_ACNT_IPC_ASYNC = p->p_accounting.ipc_async;
-	m_no_quantum.SCHEDULING_ACNT_PREEMPT   = p->p_accounting.preempted;
+	m_no_quantum.SCHEDULING_ACNT_SYS_TIME  = p->p_sys_time;
 	m_no_quantum.SCHEDULING_ACNT_CPU       = cpuid;
 	m_no_quantum.SCHEDULING_ACNT_CPU_LOAD  = cpu_load();
 

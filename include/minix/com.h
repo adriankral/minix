@@ -23,7 +23,7 @@
  *   0x1000 - 0x10FF	Notify messages
  *   0x1100 - 0x11FF	USB  
  *   0x1200 - 0x12FF    Devman
- *   0x1300 - 0x13FF    TTY Requests
+ *   0x1300 - 0x13FF    TTY Input
  *   0x1400 - 0x14FF	VFS-FS transaction IDs
  *   0x1500 - 0x15FF	Block device requests and responses
  *   0x1600 - 0x16FF	VirtualBox (VBOX) requests (see vboxif.h)
@@ -335,7 +335,6 @@
 #  define SYS_PROFBUF    (KERNEL_CALL + 38)     /* sys_profbuf() */
 
 #  define SYS_STIME      (KERNEL_CALL + 39)	/* sys_stime() */
-#  define SYS_SETTIME    (KERNEL_CALL + 40)	/* sys_settime() */
 
 #  define SYS_VMCTL      (KERNEL_CALL + 43)	/* sys_vmctl() */
 #  define SYS_SYSCTL     (KERNEL_CALL + 44)	/* sys_sysctl() */
@@ -489,14 +488,7 @@
 #define T_USER_TIME	m4_l1	/* user time consumed by process */
 #define T_SYSTEM_TIME	m4_l2	/* system time consumed by process */
 #define T_BOOTTIME	m4_l3	/* Boottime in seconds (also for SYS_STIME) */
-#define T_REAL_TICKS	m4_l4	/* number of wall clock ticks since boottime */
-#define T_BOOT_TICKS	m4_l5	/* number of hard clock ticks since boottime */
-
-/* Field names for SYS_SETTIME. */
-#define T_SETTIME_NOW	m4_l2	/* non-zero for immediate, 0 for adjtime */
-#define T_CLOCK_ID	m4_l3	/* clock to adjust */
-#define T_TIME_SEC	m4_l4	/* time in seconds since 1970 */
-#define T_TIME_NSEC	m4_l5	/* number of nano seconds */
+#define T_BOOT_TICKS	m4_l5	/* number of clock ticks since boot time */
 
 /* Field names for SYS_TRACE, SYS_PRIVCTL, SYS_STATECTL. */
 #define CTL_ENDPT      m2_i1	/* process number of the caller */
@@ -741,6 +733,19 @@
 #  define DS_OWNER		m2_i3		/* owner */
 
 /*===========================================================================*
+ *                Miscellaneous messages used by TTY			     *
+ *===========================================================================*/
+
+/* Miscellaneous request types and field names, e.g. used by IS server. */
+#define FKEY_CONTROL 		98  	/* control a function key at the TTY */
+#  define FKEY_REQUEST	     m2_i1	/* request to perform at TTY */
+#  define    FKEY_MAP		10	/* observe function key */
+#  define    FKEY_UNMAP		11	/* stop observing function key */
+#  define    FKEY_EVENTS	12	/* request open key presses */
+#  define FKEY_FKEYS	      m2_l1	/* F1-F12 keys pressed */
+#  define FKEY_SFKEYS	      m2_l2	/* Shift-F1-F12 keys pressed */
+
+/*===========================================================================*
  *                Messages used between PM and VFS			     *
  *===========================================================================*/
 
@@ -929,9 +934,8 @@
 #	define VMM_PROT			m5_s1
 #	define VMM_FLAGS		m5_s2
 #	define VMM_FD			m5_i1
-#	define VMM_OFFSET_LO		m5_i2
+#	define VMM_OFFSET		m5_i2
 #	define VMM_FORWHOM		m5_l3
-#	define VMM_OFFSET_HI		m5_l3
 #	define VMM_RETADDR		m5_l1	/* result */
 #define VM_UMAP			(VM_RQ_BASE+11)
 #	define VMU_SEG			m1_i1
@@ -977,34 +981,29 @@
 #	define VMUM_ADDR		m1_p1
 #	define VMUM_LEN			m1_i1
 
-/* To VM: map in cache block by FS */
-#define VM_MAPCACHEPAGE		(VM_RQ_BASE+26)
+/* To VM: forget all my yielded blocks. */
+#define VM_FORGETBLOCKS		(VM_RQ_BASE+22)
 
-/* To VM: identify cache block in FS */
-#define VM_SETCACHEPAGE		(VM_RQ_BASE+27)
+/* To VM: forget this block. */
+#define VM_FORGETBLOCK		(VM_RQ_BASE+23)
+#define VMFB_IDHI			m1_i1
+#define VMFB_IDLO			m1_i2
 
-/* To VFS: fields for request from VM. */
-#	define VFS_VMCALL_REQ		m10_i1
-#	define VFS_VMCALL_FD		m10_i2
-#	define VFS_VMCALL_REQID		m10_i3
-#	define VFS_VMCALL_ENDPOINT	m10_i4
-#	define VFS_VMCALL_OFFSET_LO	m10_l1
-#	define VFS_VMCALL_OFFSET_HI	m10_l2
-#	define VFS_VMCALL_LENGTH	m10_l3
-
-/* Request codes to from VM to VFS */
-#define VMVFSREQ_FDLOOKUP		101
-#define VMVFSREQ_FDCLOSE		102
-#define VMVFSREQ_FDIO			103
+/* To VM: combined yield+get call. */
+#define VM_YIELDBLOCKGETBLOCK	(VM_RQ_BASE+25)
+#define VMYBGB_VADDR			m2_p1
+#define VMYBGB_GETIDHI			m2_i1
+#define VMYBGB_GETIDLO			m2_i2
+#define VMYBGB_LEN			m2_i3
+#define VMYBGB_YIELDIDHI		m2_l1
+#define VMYBGB_YIELDIDLO		m2_l2
 
 /* Calls from VFS. */
-#define VM_VFS_REPLY		(VM_RQ_BASE+30)
-#	define VMV_ENDPOINT		m10_i1
-#	define VMV_RESULT		m10_i2
-#	define VMV_REQID		m10_i3
-#	define VMV_DEV			m10_i4
-#	define VMV_INO			m10_l1
-#	define VMV_FD			m10_l2
+#	define VMV_ENDPOINT		m1_i1	/* for all VM_VFS_REPLY_* */
+#define VM_VFS_REPLY_OPEN	(VM_RQ_BASE+30)
+#	define VMVRO_FD			m1_i2
+#define VM_VFS_REPLY_MMAP	(VM_RQ_BASE+31)
+#define VM_VFS_REPLY_CLOSE	(VM_RQ_BASE+32)
 
 #define VM_REMAP		(VM_RQ_BASE+33)
 #	define VMRE_D			m1_i1
@@ -1087,7 +1086,7 @@
 /* Basic vm calls allowed to every process. */
 #define VM_BASIC_CALLS \
     VM_MMAP, VM_MUNMAP, VM_MAP_PHYS, VM_UNMAP_PHYS, \
-    VM_INFO, VM_MAPCACHEPAGE
+    VM_FORGETBLOCKS, VM_FORGETBLOCK, VM_YIELDBLOCKGETBLOCK, VM_INFO
 
 /*===========================================================================*
  *                Messages for IPC server				     *
@@ -1138,7 +1137,7 @@
 #	define SCHEDULING_ACNT_DEQS		m9_l1
 #	define SCHEDULING_ACNT_IPC_SYNC		m9_l2
 #	define SCHEDULING_ACNT_IPC_ASYNC	m9_l3
-#	define SCHEDULING_ACNT_PREEMPT		m9_l4
+#	define SCHEDULING_ACNT_SYS_TIME		m9_l4
 #	define SCHEDULING_ACNT_QUEUE		m9_l5
 #	define SCHEDULING_ACNT_CPU		m9_s1
 #	define SCHEDULING_ACNT_CPU_LOAD		m9_s2
@@ -1220,26 +1219,16 @@
 #   define DEVMAN_RESULT         m4_l1
 
 /*===========================================================================*
- *              TTY REQUESTS	                                             *
+ *              TTY INPUT INJECTION                                          *
  *===========================================================================*/
 
-#define TTY_RQ_BASE 0x1300
+#define INPUT_BASE 0x1300
 
-#define INPUT_EVENT      (TTY_RQ_BASE + 0)
+#define INPUT_EVENT      (INPUT_BASE + 0)
 
 #	define INPUT_TYPE        m4_l1
 #	define INPUT_CODE        m4_l2
 #	define INPUT_VALUE       m4_l3
-
-
-#define TTY_FKEY_CONTROL	(TTY_RQ_BASE + 1) /* control an F-key at TTY */
-#define OLD_FKEY_CONTROL	98  	/* previously used for TTY_FKEY_CONTROL */
-#  define FKEY_REQUEST	     m2_i1	/* request to perform at TTY */
-#  define    FKEY_MAP		10	/* observe function key */
-#  define    FKEY_UNMAP		11	/* stop observing function key */
-#  define    FKEY_EVENTS	12	/* request open key presses */
-#  define FKEY_FKEYS	      m2_l1	/* F1-F12 keys pressed */
-#  define FKEY_SFKEYS	      m2_l2	/* Shift-F1-F12 keys pressed */
 
 #endif
 

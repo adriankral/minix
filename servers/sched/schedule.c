@@ -17,9 +17,13 @@
 static timer_t sched_timer;
 static unsigned balance_timeout;
 
+#define DEFAULT_START_TOKENS 6
+#define MAX_TOKENS 6
+#define NEW_TOKENS_FACTOR 0.5;
 #define BALANCE_TIMEOUT	5 /* how often to balance queues in seconds */
 
 static int schedule_process(struct schedproc * rmp, unsigned flags);
+static int distribute_tokens();
 static void balance_queues(struct timer *tp);
 
 #define SCHEDULE_CHANGE_PRIO	0x1
@@ -103,7 +107,9 @@ int do_noquantum(message *m_ptr)
 		rmp->priority += 1; /* lower priority */
 	}
 
-	if ((rv = schedule_process_local(rmp)) != OK) {
+	rmp->tokens -= m_ptr->SCHEDULING_ACNT_SYS_TIME; /* pay tokens  */
+
+	if (rmp->tokens > 0 && (rv = schedule_process_local(rmp)) != OK) {
 		return rv;
 	}
 	return OK;
@@ -163,6 +169,7 @@ int do_start_scheduling(message *m_ptr)
 	rmp->endpoint     = m_ptr->SCHEDULING_ENDPOINT;
 	rmp->parent       = m_ptr->SCHEDULING_PARENT;
 	rmp->max_priority = (unsigned) m_ptr->SCHEDULING_MAXPRIO;
+	rmp->tokens       = DEFAULT_START_TOKENS;
 	if (rmp->max_priority >= NR_SCHED_QUEUES) {
 		return EINVAL;
 	}
@@ -283,7 +290,7 @@ int do_nice(message *m_ptr)
 	/* Update the proc entry and reschedule the process */
 	rmp->max_priority = rmp->priority = new_q;
 
-	if ((rv = schedule_process_local(rmp)) != OK) {
+	if (rmp->tokens > 0 && (rv = schedule_process_local(rmp)) != OK) {
 		/* Something went wrong when rescheduling the process, roll
 		 * back the changes to proc struct */
 		rmp->priority     = old_q;
@@ -324,6 +331,10 @@ static int schedule_process(struct schedproc * rmp, unsigned flags)
 		rmp->endpoint, err);
 	}
 
+	if ((err = distribute_tokens()) != OK) {
+		printf("PM: An error occurred when calling distribute_tokens: %d\n", err);
+	}
+
 	return err;
 }
 
@@ -340,6 +351,61 @@ void init_scheduling(void)
 }
 
 /*===========================================================================*
+ *				distribute_tokens			     *
+ *===========================================================================*/
+
+/* This function is called every 5 seconds and every time a process is
+ * scheduled. It will iterate over all processes and refill their tokens.
+ */
+
+static int distribute_tokens()
+{
+	int err;
+	static clock_t last_distributed = 0;
+	static int proc_nr = 0;
+	
+	/* Calculate the amount of new tokens. */
+	clock_t time_now;
+	if((err = getuptime(&time_now)) != OK) {
+	    printf("PM: An error occured when calling getuptime: %d\n", err);
+	    return err;
+	}
+	register long new_tokens = (time_now - last_distributed) * NEW_TOKENS_FACTOR;
+	
+	/* Begin with the process that followed most recent one */
+	register struct schedproc * rmp;
+	int proc_start = proc_nr;
+	proc_nr = (proc_nr + 1) % NR_PROCS;
+
+	for (rmp = &schedproc[proc_nr]; proc_nr != proc_start && new_tokens > 0;
+			proc_nr = (proc_nr + 1) % NR_PROCS,
+			rmp = &schedproc[proc_nr]) {
+		if (rmp->flags & IN_USE) {
+			long tokens_delta = MAX_TOKENS - rmp->tokens;
+			long proc_new_tokens = (new_tokens > tokens_delta) ?
+				tokens_delta : new_tokens;
+			
+			/* transmit tokens to the process */
+			rmp->tokens += proc_new_tokens;
+			new_tokens -= proc_new_tokens;
+			
+			/* add to queue, if became active */
+			if (rmp->tokens > 0 && proc_new_tokens >= rmp->tokens &&
+				(err = sys_schedule(rmp->endpoint,
+				rmp->priority, rmp->time_slice, rmp->cpu)) != OK)
+			{
+			    printf("PM: An error ocurred when trying to schedule %d: %d\n", rmp->endpoint, err);
+			    return err;
+			}
+		}
+	}
+
+	last_distributed = time_now;
+
+	return err;
+}
+
+/*===========================================================================*
  *				balance_queues				     *
  *===========================================================================*/
 
@@ -353,11 +419,14 @@ static void balance_queues(struct timer *tp)
 	struct schedproc *rmp;
 	int proc_nr;
 
+	distribute_tokens();
+
 	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
 		if (rmp->flags & IN_USE) {
 			if (rmp->priority > rmp->max_priority) {
 				rmp->priority -= 1; /* increase priority */
-				schedule_process_local(rmp);
+				if(rmp->tokens > 0)
+					schedule_process_local(rmp);
 			}
 		}
 	}
